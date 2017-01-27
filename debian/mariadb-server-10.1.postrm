@@ -5,34 +5,10 @@
 if [ -n "$DEBIAN_SCRIPT_DEBUG" ]; then set -v -x; DEBIAN_SCRIPT_TRACE=1; fi
 ${DEBIAN_SCRIPT_TRACE:+ echo "#42#DEBUG# RUNNING $0 $*" 1>&2 }
 
-MYADMIN="/usr/bin/mysqladmin --defaults-file=/etc/mysql/debian.cnf"
-
-# Try to stop the server in a sane way. If it does not success let the admin
-# do it himself. No database directories should be removed while the server
-# is running!
-stop_server() {
-  set +e
-  if [ -x /usr/sbin/invoke-rc.d ]; then
-    invoke-rc.d mysql stop
-  else
-    /etc/init.d/mysql stop
-  fi
-  errno=$?
-  set -e
-
-  if [ "$?" != 0 ]; then
-    echo "Trying to stop the MySQL server resulted in exitcode $?." 1>&2
-    echo "Stop it yourself and try again!" 1>&2
-    exit 1
-  fi
-}
-
 case "$1" in
   purge|remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
-    if [ -n "`$MYADMIN ping 2>/dev/null`" ]; then
-      stop_server
-      sleep 2
-    fi
+    # We handle purge actions below.  The server has already been stopped
+    # if necessary by the prerm.
   ;;
   *)
     echo "postrm called with unknown argument '$1'" 1>&2
@@ -41,7 +17,7 @@ case "$1" in
 esac
 
 #
-# - Do NOT purge logs or data if another mysql-sever* package is installed (#307473)
+# - Do NOT purge logs or data if another mysql-server* package is installed (#307473)
 # - Remove the mysql user only after all his owned files are purged.
 #
 if [ "$1" = "purge" -a ! \( -x /usr/sbin/mysqld -o -L /usr/sbin/mysqld \) ]; then
@@ -77,8 +53,34 @@ if [ "$1" = "purge" -a ! \( -x /usr/sbin/mysqld -o -L /usr/sbin/mysqld \) ]; the
     userdel mysql || true
   fi
 
+  # The following would have been automatically added by dh_installinit
+  # It is placed here to ensure that it is only run when there is no other
+  # mysql server package running.  (See #852495)
+  if [ "$1" = "purge" ] ; then
+      update-rc.d mysql remove >/dev/null
+  fi
+
 fi
 
-#DEBHELPER#
+# The following would have been automatically added by dh_installdebconf
+if [ "$1" = purge ] && [ -e /usr/share/debconf/confmodule ]; then
+    . /usr/share/debconf/confmodule
+    db_purge
+fi
 
+# The following would have been automatically added by dh_installinit
+# and is safe to run in any event
+# In case this system is running systemd, we make systemd reload the unit files
+# to pick up changes.
+if [ -d /run/systemd/system ] ; then
+  systemctl --system daemon-reload >/dev/null || true
+fi
+# End what would have been automatically added by dh_installinit
+  
 exit 0
+
+# We add the debhelper snippets here, after the exit 0, so that they can
+# be visually checked in the future to ensure that nothing has been left
+# out above.
+
+#DEBHELPER#

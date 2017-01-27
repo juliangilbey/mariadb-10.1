@@ -13,21 +13,15 @@ ERR_LOGGER="logger -p daemon.err -t mysqld_safe -i"
 # the install, rather than failing silently and leaving a broken install.
 set -o pipefail
 
-invoke() {
-  if [ -x /usr/sbin/invoke-rc.d ]; then
-    invoke-rc.d mysql $1
-  else
-    /etc/init.d/mysql $1
-  fi
-}
-
 MYSQL_BOOTSTRAP="/usr/sbin/mysqld --bootstrap --user=mysql --disable-log-bin --skip-grant-tables --default-storage-engine=myisam"
 
 # This is necessary because mysql_install_db removes the pid file in /var/run
 # and because changed configuration options should take effect immediately.
 # In case the server wasn't running at all it should be ok if the stop
 # script fails. I can't tell at this point because of the cleaned /var/run.
-set +e; invoke stop; set -e
+set +e
+invoke-rc.d mysql stop
+set -e
 
 case "$1" in
   configure)
@@ -157,6 +151,28 @@ EOF
     # NOTE: $MYSQL_BOOTSTRAP requires one SQL statement per line, semicolon at the end.
     echo "$password_column_fix_query" | $MYSQL_BOOTSTRAP 2>&1 | $ERR_LOGGER
 
+    db_stop # in case invoke failes
+
+    # If we upgrade from MySQL mysql.service may be masked, which also
+    # means init.d script is disabled. Unmask mysql service explicitely.
+    # Check first that the command exists, to avoid emitting any warning messages.
+    if [ -x "$(command -v deb-systemd-helper)" ]; then
+      deb-systemd-helper unmask mysql.service > /dev/null
+    fi
+    
+    # Fix broken postrms in mysql-server-5.* and mariadb-server-10.0 packages
+    # to prevent purging these packages from breaking our package. (See #852495)
+    # We comment out all of the commands which assume that there is no other
+    # mysql server installed.
+    # (Because of the Conflicts in the control file for this package, they can
+    # only possibly be in a configuration-only state at this point.  And this
+    # cannot harm even if the system is in a very broken state and we are being
+    # configured in spite of those packages being in a different state.)
+    olds=$(ls /var/lib/dpkg/info/mysql-server-5.*.postrm /var/lib/dpkg/info/mariadb-server-10.0.postrm 2>/dev/null)
+    if [ -n "$olds" ]; then
+        perl -i -pe 's/stop_server(?=\s|$)/# stop_server/; s/^(\s*)((?:update|invoke)-rc\.d.*$)/$1# $2\n$1true/; s/^(\s*)(deb-systemd-helper.*$)/$1# $2\n$1true/; s%rm -f "/etc/apparmor.d%# rm -f "/etc/apparmor.d%' $olds
+    fi
+    
   ;;
 
   abort-upgrade|abort-remove|abort-configure)
@@ -167,15 +183,6 @@ EOF
     exit 1
   ;;
 esac
-
-db_stop # in case invoke failes
-
-# If we upgrade from MySQL mysql.service may be masked, which also
-# means init.d script is disabled. Unmask mysql service explicitely.
-# Check first that the command exists, to avoid emitting any warning messages.
-if [ -x "$(command -v deb-systemd-helper)" ]; then
-  deb-systemd-helper unmask mysql.service > /dev/null
-fi
 
 #DEBHELPER#
 

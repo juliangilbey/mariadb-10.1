@@ -28,12 +28,7 @@ stop_server() {
     if ! pgrep mysqld > /dev/null; then return; fi
 
     set +e
-    if [ -x /usr/sbin/invoke-rc.d ]; then
-      cmd="invoke-rc.d mysql stop"
-    else
-      cmd="/etc/init.d/mysql stop"
-    fi
-    $cmd
+    invoke-rc.d mysql stop
     errno=$?
     set -e
 

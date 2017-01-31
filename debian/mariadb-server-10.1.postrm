@@ -80,6 +80,13 @@ if [ $fullpurge = yes ]; then
   # mysql server package running.  (See #852495)
   update-rc.d mysql remove >/dev/null
 
+  # The following is automatically added by dh_systemd_enable to the mysql-*
+  # postrm, but is not run if another mysql-server is installed.  So we run
+  # it here in case we are the last mysql package to be purged.
+  if [ -x "/usr/bin/deb-systemd-helper" ]; then
+	deb-systemd-helper purge mysql.service >/dev/null
+	deb-systemd-helper unmask mysql.service >/dev/null
+  fi
 fi
 
 # The following would have been automatically added by dh_installdebconf

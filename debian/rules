@@ -8,22 +8,20 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all,-pie
 DPKG_EXPORT_BUILDFLAGS = 1
 include /usr/share/dpkg/buildflags.mk
 
-ARCH := $(shell dpkg-architecture -qDEB_BUILD_ARCH)
-ARCH_OS := $(shell dpkg-architecture -qDEB_BUILD_ARCH_OS)
 BUILDDIR := builddir
+DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+DEB_HOST_ARCH_ABI ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_ABI)
+DEB_HOST_ARCH_CPU ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_CPU)
+DEB_HOST_ARCH_OS ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
 DEB_HOST_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
-DEB_BUILD_GNU_SYSTEM ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_SYSTEM)
-DEB_BUILD_ARCH ?= $(shell dpkg-architecture -qDEB_BUILD_ARCH)
-DEB_BUILD_ARCH_ABI ?= $(shell dpkg-architecture -qDEB_BUILD_ARCH_ABI)
-DEB_BUILD_ARCH_CPU ?= $(shell dpkg-architecture -qDEB_BUILD_ARCH_CPU)
-DEB_BUILD_ARCH_OS ?= $(shell dpkg-architecture -qDEB_BUILD_ARCH_OS)
+DEB_HOST_GNU_SYSTEM ?= $(shell dpkg-architecture -qDEB_HOST_GNU_SYSTEM)
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 DEBVERSION := $(shell dpkg-parsechangelog | awk '/^Version: / { print $$2 }' | sed 's/^.*-//' )
 DEB_SOURCE_PACKAGE ?= $(strip $(shell egrep '^Source: ' debian/control | cut -f 2 -d ':'))
 DEB_VERSION ?= $(shell dpkg-parsechangelog | egrep '^Version:' | cut -f 2 -d ' ')
 DEB_NOEPOCH_VERSION ?= $(shell echo $(DEB_VERSION) | cut -d: -f2-)
 DEB_UPSTREAM_VERSION ?= $(shell echo $(DEB_NOEPOCH_VERSION) | sed 's/-[^-]*$$//')
 DEB_UPSTREAM_VERSION_MAJOR_MINOR := $(shell echo $(DEB_UPSTREAM_VERSION) | sed -r -n 's/^([0-9]+\.[0-9]+).*/\1/p')
-DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 DISTRIBUTION := $(shell lsb_release -i -s)
 RELEASE := $(shell lsb_release -r -s)
 TMP:=$(CURDIR)/debian/tmp
@@ -42,9 +40,8 @@ else
 endif
 
 # Ignore test suite exit code on unstable platforms
-ifneq (,$(filter $(ARCH), mips mipsel))
+ifneq (,$(filter $(DEB_HOST_ARCH), mips mipsel))
     TESTSUITE_FAIL_CMD:=true
-    EXTRA_REQ_LIBARIES:=atomic
 else
     TESTSUITE_FAIL_CMD:=exit 1
 endif
@@ -64,6 +61,22 @@ override_dh_auto_clean:
 	dh_testdir
 	dh_testroot
 	[ ! -d mysql-test/var ] || rm -rf mysql-test/var
+	[ ! -f storage/mroonga/mysql-test/mroonga/storage/r/information_schema_plugins.result ] || \
+	    rm -f storage/mroonga/mysql-test/mroonga/storage/r/information_schema_plugins.result
+	[ ! -f storage/mroonga/mysql-test/mroonga/storage/r/variable_version.result ] || \
+	    rm -f storage/mroonga/mysql-test/mroonga/storage/r/variable_version.result
+
+	[ ! -f debian/libmariadbclient18.symbols.disabled ] || \
+	    mv debian/libmariadbclient18.symbols.disabled debian/libmariadbclient18.symbols
+
+	[ ! -f debian/mariadb-server-10.1.mariadb.service ] || \
+	    rm -f debian/mariadb-server-10.1.mariadb.service
+	[ ! -f debian/mariadb-server-10.1.mariadb@.service ] || \
+	    rm -f debian/mariadb-server-10.1.mariadb@.service
+
+	[ ! -f debian/mysql-test-unstable-tests.orig ] || \
+	    mv debian/mysql-test-unstable-tests.orig mysql-test/unstable-tests
+
 	rm -rf $(BUILDDIR)
 	debconf-updatepo # Update po-files when clean runs before each build
 
@@ -77,8 +90,8 @@ override_dh_auto_configure:
 	# Versioned symbols are only available on Linux.
 	# Remove symbols file on kFreeBSD and Hurd builds so that
 	# dpkg-gensymbols will not fail the build.
-ifneq (,$(filter $(ARCH), kfreebsd-i386 kfreebsd-amd64 hurd-i386))
-	rm debian/libmariadbclient18.symbols
+ifneq (,$(filter $(DEB_HOST_ARCH_OS), kfreebsd hurd))
+	mv debian/libmariadbclient18.symbols debian/libmariadbclient18.symbols.disabled
 endif
 
 	mkdir -p $(BUILDDIR) && cd $(BUILDDIR) && \
@@ -90,16 +103,14 @@ endif
 	    -DWITH_SSL=bundled \
 	    -DCOMPILATION_COMMENT="$(DISTRIBUTION) $(RELEASE)" \
 	    -DMYSQL_SERVER_SUFFIX="-$(DEBVERSION)" \
-	    -DSYSTEM_TYPE="debian-$(DEB_BUILD_GNU_SYSTEM)" \
-	    -DCMAKE_SYSTEM_PROCESSOR=$(DEB_BUILD_ARCH) \
+	    -DSYSTEM_TYPE="debian-$(DEB_HOST_GNU_SYSTEM)" \
+	    -DCMAKE_SYSTEM_PROCESSOR=$(DEB_HOST_ARCH) \
 	    -DBUILD_CONFIG=mysql_release \
 	    -DINSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH) \
 	    -DINSTALL_PLUGINDIR=lib/$(DEB_HOST_MULTIARCH)/mariadb18/plugin \
 	    -DINSTALL_MYSQLTESTDIR=share/mysql/mysql-test \
 	    -DPLUGIN_AUTH_SOCKET=STATIC \
-	    -DEXTRA_REQ_LIBRARIES="$(EXTRA_REQ_LIBARIES)" \
 	    -DDEB=$(DISTRIBUTION) ..'
-	touch $@
 
 # This is needed, otherwise 'make test' will run before binaries have been built
 override_dh_auto_build:
@@ -107,13 +118,13 @@ override_dh_auto_build:
 	# Print build env info to help debug builds on different platforms
 	dpkg-architecture
 	cd $(BUILDDIR) && $(MAKE)
-	touch $@
 
 override_dh_auto_test:
 	@echo "RULES.$@"
 	dh_testdir
 	# Skip unstable tests if such are defined for arch
-	[ ! -f debian/unstable-tests.$(ARCH) ] || cat debian/unstable-tests.$(ARCH) >> mysql-test/unstable-tests
+	cp mysql-test/unstable-tests debian/mysql-test-unstable-tests.orig
+	[ ! -f debian/unstable-tests.$(DEB_HOST_ARCH) ] || cat debian/unstable-tests.$(DEB_HOST_ARCH) >> mysql-test/unstable-tests
 	# Run testsuite
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	cd $(BUILDDIR)/mysql-test && ./mtr --force --testcase-timeout=30 --suite-timeout=540 --retry=3 --parallel=$(NUMJOBS) --skip-test-list=unstable-tests  || $(TESTSUITE_FAIL_CMD) ;
@@ -124,7 +135,7 @@ override_dh_auto_install:
 	dh_testdir
 	dh_testroot
 
-ifneq (,$(filter linux,$(DEB_BUILD_ARCH_OS)))
+ifneq (,$(filter linux,$(DEB_HOST_ARCH_OS)))
 	# Copy systemd files to a location available for dh_installinit
 	cp $(BUILDDIR)/support-files/mariadb.service debian/mariadb-server-10.1.mariadb.service
 	cp $(BUILDDIR)/support-files/mariadb@.service debian/mariadb-server-10.1.mariadb@.service
@@ -144,8 +155,6 @@ endif
 
 	# rename and install AppArmor profile
 	install -D -m 644 debian/apparmor-profile $(TMP)/etc/apparmor.d/usr.sbin.mysqld
-
-	touch $@
 
 override_dh_installlogrotate-arch:
 	dh_installlogrotate --name mysql-server

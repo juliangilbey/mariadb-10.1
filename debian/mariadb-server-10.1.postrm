@@ -5,6 +5,28 @@
 if [ -n "$DEBIAN_SCRIPT_DEBUG" ]; then set -v -x; DEBIAN_SCRIPT_TRACE=1; fi
 ${DEBIAN_SCRIPT_TRACE:+ echo "#42#DEBUG# RUNNING $0 $*" 1>&2 }
 
+# Do we (offer to) do a full purge, or is there another mysql server
+# present?  This includes within it a check for "$1" = purge.
+fullpurge=no
+if [ "$1" = purge ]; then
+  if [ ! \( -x /usr/sbin/mysqld -o -L /usr/sbin/mysqld \) ]; then
+    fullpurge=yes
+  elif [ -x /usr/sbin/mysqld ]; then
+    # Does this /usr/sbin/mysqld belong to our server-core package?
+    # If so, we can offer to do a full purge, otherwise we do not.
+
+    # Use the DPKG_MAINTSCRIPT_PACKAGE to avoid hardcoding the package
+    # name; this reduces the chances of future errors creeping in.
+    # If we're being run outside of a dpkg run, then this is safe.
+    package=${DPKG_MAINTSCRIPT_PACKAGE}
+    corepackage=$(echo "$package" | sed -e 's/server-/server-core-/')
+    daemonpackage=$(dpkg-query -S /usr/sbin/mysqld 2>/dev/null | cut -d: -f1)
+    if [ "$corepackage" = "$daemonpackage" -a -n "$corepackage" ]; then
+      fullpurge=yes
+    fi
+  fi
+fi
+
 case "$1" in
   purge|remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
     # We handle purge actions below.  The server has already been stopped
@@ -20,7 +42,7 @@ esac
 # - Do NOT purge logs or data if another mysql-server* package is installed (#307473)
 # - Remove the mysql user only after all his owned files are purged.
 #
-if [ "$1" = "purge" -a ! \( -x /usr/sbin/mysqld -o -L /usr/sbin/mysqld \) ]; then
+if [ $fullpurge = yes ]; then
   # we remove the mysql user only after all his owned files are purged
   rm -f /var/log/mysql.{log,err}{,.0,.[1234567].gz}
   rm -rf /var/log/mysql
@@ -56,9 +78,7 @@ if [ "$1" = "purge" -a ! \( -x /usr/sbin/mysqld -o -L /usr/sbin/mysqld \) ]; the
   # The following would have been automatically added by dh_installinit
   # It is placed here to ensure that it is only run when there is no other
   # mysql server package running.  (See #852495)
-  if [ "$1" = "purge" ] ; then
-      update-rc.d mysql remove >/dev/null
-  fi
+  update-rc.d mysql remove >/dev/null
 
 fi
 

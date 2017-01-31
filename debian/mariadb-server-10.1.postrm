@@ -72,6 +72,9 @@ if [ $fullpurge = yes ]; then
       rmdir --ignore-fail-on-non-empty /var/lib/mysql || true
     fi
     rm -rf /var/run/mysqld # this directory is created by the init script, don't leave behind
+    # These are possible leftovers from removed or purged mysql-server-5.* packages
+    rm -rf /var/lib/mysql-files
+    rm -rf /var/lib/mysql-keyring
     userdel mysql || true
   fi
 

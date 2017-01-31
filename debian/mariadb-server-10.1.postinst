@@ -168,7 +168,12 @@ EOF
     # only possibly be in a configuration-only state at this point.  And this
     # cannot harm even if the system is in a very broken state and we are being
     # configured in spite of those packages being in a different state.)
-    olds=$(ls /var/lib/dpkg/info/mysql-server-5.*.postrm /var/lib/dpkg/info/mariadb-server-10.0.postrm 2>/dev/null || true)
+    olds=$(ls /var/lib/dpkg/info/mysql-server-5.[1-6].postrm /var/lib/dpkg/info/mariadb-server-10.0.postrm 2>/dev/null || true)
+    if [ -f /var/lib/dpkg/info/mysql-server-5.7.postrm ]; then
+	if ! grep -q fullpurge /var/lib/dpkg/info/mysql-server-5.7.postrm; then
+	    olds="$olds /var/lib/dpkg/info/mysql-server-5.7.postrm"
+	fi
+    fi
     if [ -n "$olds" ]; then
         perl -i -pe 's/stop_server(?=\s|$)/# stop_server/; s/^(\s*)((?:update|invoke)-rc\.d.*$)/$1# $2\n$1true/; s/^(\s*)(deb-systemd-helper.*$)/$1# $2\n$1true/; s%rm -f "/etc/apparmor.d%# rm -f "/etc/apparmor.d%' $olds
     fi
